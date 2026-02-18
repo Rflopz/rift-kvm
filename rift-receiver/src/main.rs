@@ -12,31 +12,39 @@ struct Args {
     port: u16,
 }
 
-// Same wire format as Sender
 #[derive(Serialize, Deserialize, Debug)]
-struct InputPacket {
-    e_type: u16,
-    code: u16,
-    value: i32,
+enum Packet {
+    Event { e_type: u16, code: u16, value: i32 },
+    ConfigRequest,
+    ConfigResponse { width: i32 },
 }
 
 fn main() -> std::io::Result<()> {
     let args = Args::parse();
 
+    // 0. Detect Screen Width
+    let screen_width = display_info::DisplayInfo::all()
+        .map(|displays| {
+            displays.iter()
+                .find(|d| d.is_primary)
+                .map(|d| d.width as i32)
+                .unwrap_or(1920)
+        })
+        .unwrap_or(1920);
+
+    println!("🖥️  Local Screen Width: {}", screen_width);
+
     // 1. Configure the Virtual Device
-    // We must tell the OS *exactly* what this device can do.
-    // If we don't enable a button here, the OS will ignore it later.
     let mut keys = AttributeSet::<Key>::new();
-    keys.insert(Key::BTN_LEFT);
-    keys.insert(Key::BTN_RIGHT);
-    keys.insert(Key::BTN_MIDDLE);
-    keys.insert(Key::BTN_SIDE);      // Back button
-    keys.insert(Key::BTN_EXTRA);     // Forward button
+    for i in 0..512 {
+        keys.insert(Key::new(i));
+    }
 
     let mut rels = AttributeSet::<RelativeAxisType>::new();
     rels.insert(RelativeAxisType::REL_X);
     rels.insert(RelativeAxisType::REL_Y);
-    rels.insert(RelativeAxisType::REL_WHEEL); // Scroll wheel
+    rels.insert(RelativeAxisType::REL_WHEEL);
+    rels.insert(RelativeAxisType::REL_HWHEEL);
 
     let mut device = VirtualDeviceBuilder::new()?
         .name("Rift Virtual Mouse")
@@ -45,7 +53,6 @@ fn main() -> std::io::Result<()> {
         .build()
         .expect("Failed to create virtual device. Do you have permission on /dev/uinput?");
 
-    // FIX: Just print the name directly, don't ask the device object for it.
     println!("👻 Rift Receiver Active. Device created: Rift Virtual Mouse");
 
     // 2. Setup Network
@@ -55,18 +62,22 @@ fn main() -> std::io::Result<()> {
     // 3. The Loop
     let mut buf = [0u8; 1024];
     loop {
-        let (amt, _src) = socket.recv_from(&mut buf)?;
+        let (amt, src) = socket.recv_from(&mut buf)?;
         
-        if let Ok(packet) = bincode::deserialize::<InputPacket>(&buf[..amt]) {
-            // Reconstruct the Event
-            let event = InputEvent::new(
-                EventType(packet.e_type),
-                packet.code,
-                packet.value
-            );
-
-            // Inject it into the Kernel
-            device.emit(&[event])?;
+        if let Ok(packet) = bincode::deserialize::<Packet>(&buf[..amt]) {
+            match packet {
+                Packet::Event { e_type, code, value } => {
+                    let event = InputEvent::new(EventType(e_type), code, value);
+                    device.emit(&[event])?;
+                }
+                Packet::ConfigRequest => {
+                    println!("🤝 Handshake requested from {}", src);
+                    let response = Packet::ConfigResponse { width: screen_width };
+                    let encoded = bincode::serialize(&response).unwrap();
+                    socket.send_to(&encoded, src)?;
+                }
+                _ => {}
+            }
         }
     }
 }
