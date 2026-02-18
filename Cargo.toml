@@ -1,0 +1,4 @@
+# Cargo.toml (in the root rift/ folder)
+[workspace]
+members = ["rift-core", "rift-receiver", "rift-ui"]
+resolver = "2"

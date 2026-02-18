@@ -1,0 +1,16 @@
+[package]
+name = "rift-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# The star of the show: Direct Linux Input/Output
+evdev = "0.12" 
+
+# For parsing CLI args (e.g. ./rift-core --device /dev/input/event3)
+clap = { version = "4.5", features = ["derive"] }
+
+# Serialization for when we send data later
+serde = { version = "1.0", features = ["derive"] }
+
+bincode = "1.3"
